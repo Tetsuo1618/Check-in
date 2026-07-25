@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14161A">
+<title>Location Check-In</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#14161A; --label:#FBFBF9; --field:#DDE1E6; --rule:#B9BFC7;
+  --muted:#616872; --safety:#FFD100; --pass:#0A6E3B; --reject:#C0132A; --wait:#B45309;
+  --step:4px;
+}
+*{ box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+body{
+  font-family:'IBM Plex Sans Condensed','Roboto Condensed',system-ui,sans-serif;
+  background:var(--field); color:var(--ink); min-height:100dvh;
+  display:flex; justify-content:center; padding:calc(var(--step)*3);
+  -webkit-text-size-adjust:100%;
+}
+.card{ width:100%; max-width:440px; background:var(--label); border:2px solid var(--ink);
+  display:flex; flex-direction:column; align-self:flex-start; }
+
+.head{ background:var(--ink); color:var(--label); display:flex; align-items:center;
+  justify-content:space-between; padding:calc(var(--step)*3) calc(var(--step)*4); }
+.head .t{ font-weight:700; letter-spacing:.14em; text-transform:uppercase; font-size:15px; }
+.head .led{ width:9px; height:9px; border-radius:50%; background:var(--muted); }
+.head .led.on{ background:var(--safety); box-shadow:0 0 0 3px rgba(255,209,0,.25); }
+
+.body{ padding:calc(var(--step)*5) calc(var(--step)*4) calc(var(--step)*4); display:flex;
+  flex-direction:column; gap:calc(var(--step)*4); }
+
+label.fld{ display:block; }
+label.fld .cap{ font-size:11px; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--muted); font-weight:600; margin-bottom:calc(var(--step)*1.5); }
+label.fld input{ width:100%; border:2px solid var(--ink); background:var(--label);
+  font-family:'IBM Plex Mono',monospace; font-size:22px; font-weight:600;
+  padding:calc(var(--step)*3); }
+label.fld input:focus{ outline:3px solid var(--safety); outline-offset:2px; }
+
+#send{ border:2px solid var(--ink); background:var(--safety); color:var(--ink);
+  font-family:inherit; font-weight:700; letter-spacing:.12em; text-transform:uppercase;
+  font-size:26px; min-height:96px; cursor:pointer; box-shadow:0 5px 0 var(--ink);
+  transform:translateY(-5px); }
+#send:active:not(:disabled){ box-shadow:0 0 0 var(--ink); transform:translateY(0); }
+#send:disabled{ background:var(--field); color:var(--rule); border-color:var(--rule);
+  box-shadow:none; transform:none; cursor:progress; }
+
+.status{ border:1px solid var(--rule); background:var(--field); padding:calc(var(--step)*3.5);
+  min-height:64px; display:flex; align-items:center; gap:calc(var(--step)*3); }
+.status .badge{ font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:12px;
+  padding:calc(var(--step)*1) calc(var(--step)*2); border:1px solid var(--ink); flex:0 0 auto; }
+.status.ok .badge{ background:var(--pass); color:#fff; border-color:var(--pass); }
+.status.err .badge{ background:var(--reject); color:#fff; border-color:var(--reject); }
+.status.busy .badge{ background:var(--wait); color:#fff; border-color:var(--wait); }
+.status .msg{ font-size:14px; line-height:1.35; }
+.status .msg b{ font-family:'IBM Plex Mono',monospace; }
+
+.foot{ border-top:1px dashed var(--rule); padding:calc(var(--step)*3) calc(var(--step)*4);
+  font-size:11px; color:var(--muted); letter-spacing:.04em; }
+
+@media (prefers-reduced-motion:reduce){ *{ transition:none!important; } }
+</style>
+</head>
+<body>
+
+<main class="card">
+  <div class="head">
+    <span class="t">Location Check-In</span>
+    <span class="led" id="led"></span>
+  </div>
+
+  <div class="body">
+    <label class="fld">
+      <span class="cap">Your name</span>
+      <!-- Remembered on THIS phone after the first time, so drivers type it once. -->
+      <input id="name" inputmode="text" autocomplete="name" placeholder="e.g. Omar" />
+    </label>
+
+    <button id="send">Send My Location</button>
+
+    <div class="status" id="status">
+      <span class="badge" id="badge">READY</span>
+      <span class="msg" id="msg">Enter your name, then tap the button.</span>
+    </div>
+  </div>
+
+  <div class="foot" id="foot">Your location is sent only when you tap the button.</div>
+</main>
+
+<!-- ============================================================
+     FIREBASE — type="module" lets us import straight from the CDN.
+     Version 12.16.0 is current as of this build.
+     ============================================================ -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
+import { getFirestore, collection, addDoc, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+
+/* ============================================================
+   YOUR FIREBASE CONFIG — already filled in. Nothing to edit here.
+   (This is your check-in-4eb56 project. Safe to be public: the
+   key just names the project; your Firestore RULES are the lock.)
+   ============================================================ */
+const firebaseConfig = {
+  apiKey: "AIzaSyDzvxKptm26YrTLGnLBQVWA3bsxW_BdUqo",
+  authDomain: "check-in-4eb56.firebaseapp.com",
+  projectId: "check-in-4eb56",
+  storageBucket: "check-in-4eb56.firebasestorage.app",
+  messagingSenderId: "234001919198",
+  appId: "1:234001919198:web:bb960c425745a6e2ac264f",
+};
+
+/* This must match the collection name in your Firestore rules. */
+const COLLECTION = "checkins";
+
+
+/* ============================================================
+   WIRE UP
+   ============================================================ */
+const $ = id => document.getElementById(id);
+const nameEl = $("name"), sendBtn = $("send"), led = $("led");
+
+// Boot Firebase. If init fails (bad/malformed config), say so plainly
+// and keep the button disabled rather than failing later at write time.
+let db = null;
+try {
+  const app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+} catch (e) {
+  setStatus("err", "SETUP", "Firebase failed to start. Re-check the config values.");
+  sendBtn.disabled = true;
+}
+
+// Restore a remembered name. try/catch because some sandboxes block storage.
+try {
+  const saved = localStorage.getItem("checkin_name");
+  if (saved) nameEl.value = saved;
+} catch (_) {}
+
+
+/* ============================================================
+   THE ONE ACTION
+   ============================================================ */
+sendBtn.addEventListener("click", async () => {
+  const name = nameEl.value.trim();
+  if (!name){ setStatus("err", "NAME", "Type your name first."); nameEl.focus(); return; }
+  if (!db){ setStatus("err", "SETUP", "Firebase isn't ready."); return; }
+
+  // Remember the name for next time on this phone.
+  try { localStorage.setItem("checkin_name", name); } catch (_) {}
+
+  lock(true);
+  setStatus("busy", "GPS", "Getting your location…");
+
+  let fix;
+  try {
+    fix = await getPosition();           // ask the phone for one GPS reading
+  } catch (err) {
+    const map = {
+      1: "Location is blocked. Allow it in the browser's site settings, then retry.",
+      2: "No location signal. Step outside or away from the building, then retry.",
+      3: "Took too long. Hold still a moment and retry.",
+    };
+    setStatus("err", "FAILED", map[err.code] || "Couldn't get location. Retry.");
+    lock(false);
+    return;
+  }
+
+  // Fast, clear offline message so the button never hangs in a dead zone.
+  if (!navigator.onLine) {
+    setStatus("err", "OFFLINE", "You're offline. Move into signal, then tap again.");
+    lock(false);
+    return;
+  }
+
+  setStatus("busy", "SEND", "Sending…");
+  try {
+    // serverTime is stamped by Google's clock - the only one you can trust.
+    const write = addDoc(collection(db, COLLECTION), {
+      name:       name,
+      lat:        fix.coords.latitude,
+      lng:        fix.coords.longitude,
+      accuracyM:  Math.round(fix.coords.accuracy),
+      deviceTime: fix.timestamp,                     // phone clock (editable)
+      serverTime: serverTimestamp(),                 // trusted clock
+      userAgent:  navigator.userAgent,
+    });
+
+    // Race the write against a 12s timeout so weak signal can't freeze the UI.
+    await Promise.race([
+      write,
+      new Promise((_, reject) => setTimeout(() => reject({ code: "timeout" }), 12000)),
+    ]);
+
+    const acc = Math.round(fix.coords.accuracy);
+    const when = new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+    setStatus("ok", "SENT \u2713", `Location sent at ${when} · accuracy ${acc} m.`);
+  } catch (err) {
+    const msg = (err && err.code === "timeout")
+      ? "Weak signal — couldn't confirm. Move into better signal and tap again."
+      : "Send failed. Check your connection and try again.";
+    setStatus("err", "NOT SENT", msg);
+    console.error(err);
+  } finally {
+    lock(false);
+  }
+});
+
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function getPosition(){
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation){ reject({code:2}); return; }
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,   // real GPS, not just wifi/cell guess
+      maximumAge: 0,              // never reuse an old fix
+      timeout: 15000,             // give up after 15s rather than hang
+    });
+  });
+}
+
+function setStatus(kind, badge, msg){
+  const s = $("status");
+  s.className = "status " + kind;
+  $("badge").textContent = badge;
+  $("msg").innerHTML = msg;
+  led.classList.toggle("on", kind === "ok" || kind === "busy");
+}
+
+function lock(on){
+  sendBtn.disabled = on;
+  sendBtn.textContent = on ? "Working…" : "Send My Location";
+}
+</script>
+</body>
+</html>
