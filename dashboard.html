@@ -66,7 +66,7 @@ body{ font-family:'IBM Plex Sans Condensed','Roboto Condensed',system-ui,sans-se
 .row{ display:grid; grid-template-columns:1.4fr 1.3fr auto; gap:calc(var(--step)*2) calc(var(--step)*3);
   align-items:center; padding:calc(var(--step)*3) calc(var(--step)*4); border-bottom:1px dashed var(--rule); cursor:pointer; }
 .row:active{ background:var(--field); }
-.row .name{ font-weight:700; font-size:15px; }
+.row .team{ font-weight:700; font-size:15px; font-family:'IBM Plex Mono',monospace; }
 .row .when{ font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--muted); }
 .row .acc{ font-family:'IBM Plex Mono',monospace; font-size:12px; }
 .row .acc .dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; vertical-align:middle; }
@@ -116,11 +116,11 @@ body{ font-family:'IBM Plex Sans Condensed','Roboto Condensed',system-ui,sans-se
   <div id="map"></div>
 
   <div class="controls">
-    <select id="driverFilter"><option value="">All drivers</option></select>
+    <select id="teamFilter"><option value="">All route teams</option></select>
     <select id="sortBy">
       <option value="newest">Newest first</option>
       <option value="oldest">Oldest first</option>
-      <option value="driver">By driver</option>
+      <option value="team">By route team</option>
       <option value="accuracy">Best accuracy</option>
     </select>
     <button class="csv" id="csvBtn" type="button">Download CSV</button>
@@ -237,7 +237,7 @@ function drawMarkers(list){
     const m = L.circleMarker([r.lat, r.lng], {
       radius: 8, color: "#14161A", weight: 2, fillColor: color, fillOpacity: 0.9,
     }).bindPopup(
-      `<b>${escapeHtml(r.name)}</b><br>${fmtWhen(r.when)}<br>` +
+      `<b>${escapeHtml(r.routeTeam)}</b><br>${fmtWhen(r.when)}<br>` +
       `<span class="mono">±${r.accuracyM ?? "?"} m · ${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}</span>`
     );
     m._row = r;
@@ -272,14 +272,15 @@ async function loadData(){
       const when = x.serverTime?.toDate ? x.serverTime.toDate()
                  : (x.deviceTime ? new Date(x.deviceTime) : null);
       return {
-        name: x.name || "(no name)",
+        // fall back to the old `name` field so early test rows still display
+        routeTeam: x.routeTeam || x.name || "(unknown)",
         lat: typeof x.lat === "number" ? x.lat : null,
         lng: typeof x.lng === "number" ? x.lng : null,
         accuracyM: x.accuracyM ?? null,
         when,
       };
     });
-    buildDriverFilter();
+    buildTeamFilter();
     render();
   } catch (err) {
     // The usual culprit: rules still block reads. Tell them exactly that.
@@ -293,7 +294,7 @@ async function loadData(){
 }
 
 $("refresh").addEventListener("click", loadData);
-$("driverFilter").addEventListener("change", render);
+$("teamFilter").addEventListener("change", render);
 $("sortBy").addEventListener("change", render);
 
 
@@ -301,14 +302,14 @@ $("sortBy").addEventListener("change", render);
    RENDER — filter + sort + paint list + markers.
    ============================================================ */
 function render(){
-  const driver = $("driverFilter").value;
+  const team = $("teamFilter").value;
   const sort = $("sortBy").value;
 
-  let view = rows.filter(r => !driver || r.name === driver);
+  let view = rows.filter(r => !team || r.routeTeam === team);
 
   view.sort((a, b) => {
     if (sort === "oldest") return (a.when?.getTime() || 0) - (b.when?.getTime() || 0);
-    if (sort === "driver") return a.name.localeCompare(b.name) || (b.when?.getTime() || 0) - (a.when?.getTime() || 0);
+    if (sort === "team") return a.routeTeam.localeCompare(b.routeTeam) || (b.when?.getTime() || 0) - (a.when?.getTime() || 0);
     if (sort === "accuracy") return (a.accuracyM ?? 1e9) - (b.accuracyM ?? 1e9);
     return (b.when?.getTime() || 0) - (a.when?.getTime() || 0);   // newest
   });
@@ -317,8 +318,8 @@ function render(){
   drawMarkers(view);
 
   const list = $("list");
-  if (!rows.length){ setState("No check-ins yet. Once a driver taps Send, rows appear here."); return; }
-  if (!view.length){ setState("No check-ins for that driver."); return; }
+  if (!rows.length){ setState("No check-ins yet. Once a route team taps Send, rows appear here."); return; }
+  if (!view.length){ setState("No check-ins for that route team."); return; }
 
   list.innerHTML = "";
   view.forEach(r => {
@@ -327,7 +328,7 @@ function render(){
     const hasLoc = typeof r.lat === "number";
     const maps = hasLoc ? `https://www.google.com/maps?q=${r.lat},${r.lng}` : "#";
     el.innerHTML = `
-      <div class="name">${escapeHtml(r.name)}</div>
+      <div class="team">${escapeHtml(r.routeTeam)}</div>
       <div class="when">${fmtWhen(r.when)}</div>
       <a class="go" href="${maps}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Maps ↗</a>
       <div class="acc"><span class="dot ${accClass(r.accuracyM)}"></span>±${r.accuracyM ?? "?"} m</div>
@@ -338,12 +339,12 @@ function render(){
   });
 }
 
-function buildDriverFilter(){
-  const names = [...new Set(rows.map(r => r.name))].sort();
-  const sel = $("driverFilter");
+function buildTeamFilter(){
+  const teams = [...new Set(rows.map(r => r.routeTeam))].sort();
+  const sel = $("teamFilter");
   const cur = sel.value;
-  sel.innerHTML = '<option value="">All drivers</option>' +
-    names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+  sel.innerHTML = '<option value="">All route teams</option>' +
+    teams.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("");
   sel.value = cur;   // keep selection across refreshes
 }
 
@@ -352,15 +353,15 @@ function buildDriverFilter(){
    CSV — build from the currently filtered/sorted view.
    ============================================================ */
 $("csvBtn").addEventListener("click", () => {
-  const driver = $("driverFilter").value;
-  const view = rows.filter(r => !driver || r.name === driver);
+  const team = $("teamFilter").value;
+  const view = rows.filter(r => !team || r.routeTeam === team);
   if (!view.length){ return; }
 
-  const header = ["name", "datetime", "accuracy_m", "lat", "lng"];
+  const header = ["route_team", "datetime", "accuracy_m", "lat", "lng"];
   const lines = [header.join(",")];
   view.forEach(r => {
     lines.push([
-      csv(r.name),
+      csv(r.routeTeam),
       csv(r.when ? r.when.toISOString() : ""),
       r.accuracyM ?? "",
       r.lat ?? "",
