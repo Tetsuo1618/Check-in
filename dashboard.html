@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14161A">
+<title>Check-In Dashboard</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+
+<!-- Leaflet: free maps, no API key. Loaded before the module so `L` is global. -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+:root{
+  --ink:#14161A; --label:#FBFBF9; --field:#DDE1E6; --rule:#B9BFC7;
+  --muted:#616872; --safety:#FFD100; --pass:#0A6E3B; --reject:#C0132A; --wait:#B45309;
+  --step:4px;
+}
+*{ box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+body{ font-family:'IBM Plex Sans Condensed','Roboto Condensed',system-ui,sans-serif;
+  background:var(--field); color:var(--ink); min-height:100dvh; -webkit-text-size-adjust:100%; }
+
+/* ---------- LOGIN ---------- */
+#login{ min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:calc(var(--step)*3); }
+#login .card{ width:100%; max-width:380px; background:var(--label); border:2px solid var(--ink); }
+#login .head{ background:var(--ink); color:var(--label); padding:calc(var(--step)*3) calc(var(--step)*4);
+  font-weight:700; letter-spacing:.14em; text-transform:uppercase; font-size:15px; }
+#login .body{ padding:calc(var(--step)*5) calc(var(--step)*4); display:flex; flex-direction:column; gap:calc(var(--step)*4); }
+#login .cap{ font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); font-weight:600; margin-bottom:calc(var(--step)*1.5); }
+#login input{ width:100%; border:2px solid var(--ink); background:var(--label);
+  font-family:'IBM Plex Mono',monospace; font-size:18px; padding:calc(var(--step)*3); }
+#login input:focus{ outline:3px solid var(--safety); outline-offset:2px; }
+#login button{ border:2px solid var(--ink); background:var(--safety); color:var(--ink);
+  font-family:inherit; font-weight:700; letter-spacing:.12em; text-transform:uppercase;
+  font-size:18px; min-height:64px; cursor:pointer; }
+#login button:disabled{ background:var(--field); color:var(--rule); border-color:var(--rule); cursor:progress; }
+#login .msg{ font-size:13px; color:var(--reject); font-weight:600; min-height:1.2em; }
+
+/* ---------- APP ---------- */
+#app{ display:none; flex-direction:column; min-height:100dvh; }
+.bar{ background:var(--ink); color:var(--label); display:flex; align-items:center;
+  justify-content:space-between; padding:calc(var(--step)*3) calc(var(--step)*4); position:sticky; top:0; z-index:500; }
+.bar .t{ font-weight:700; letter-spacing:.12em; text-transform:uppercase; font-size:15px; }
+.bar .tools{ display:flex; gap:calc(var(--step)*2); }
+.bar button{ font-family:inherit; font-weight:700; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+  border:1px solid var(--label); background:transparent; color:var(--label); padding:6px 10px; cursor:pointer; }
+.bar button:active{ background:var(--label); color:var(--ink); }
+
+#map{ height:38vh; min-height:240px; width:100%; background:var(--field); border-bottom:2px solid var(--ink); z-index:1; }
+
+.controls{ display:flex; gap:calc(var(--step)*2); flex-wrap:wrap; align-items:center;
+  padding:calc(var(--step)*3) calc(var(--step)*4); background:var(--label); border-bottom:1px solid var(--rule); }
+.controls select, .controls input{ font-family:'IBM Plex Sans Condensed',sans-serif; font-size:13px;
+  border:2px solid var(--ink); background:var(--label); padding:7px 9px; }
+.controls .count{ margin-left:auto; font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--muted); }
+.controls .csv{ border:2px solid var(--ink); background:var(--pass); color:#fff; font-weight:700;
+  letter-spacing:.06em; text-transform:uppercase; font-size:12px; padding:7px 12px; cursor:pointer; }
+
+.list{ flex:1; background:var(--label); }
+.state{ padding:calc(var(--step)*8) calc(var(--step)*4); text-align:center; color:var(--muted); font-size:14px; }
+
+.row{ display:grid; grid-template-columns:1.4fr 1.3fr auto; gap:calc(var(--step)*2) calc(var(--step)*3);
+  align-items:center; padding:calc(var(--step)*3) calc(var(--step)*4); border-bottom:1px dashed var(--rule); cursor:pointer; }
+.row:active{ background:var(--field); }
+.row .name{ font-weight:700; font-size:15px; }
+.row .when{ font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--muted); }
+.row .acc{ font-family:'IBM Plex Mono',monospace; font-size:12px; }
+.row .acc .dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+.row .acc .dot.good{ background:var(--pass); } .row .acc .dot.mid{ background:var(--wait); } .row .acc .dot.bad{ background:var(--reject); }
+.row .coords{ grid-column:1 / 3; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); }
+.row .go{ grid-row:1 / 3; align-self:center; border:2px solid var(--ink); background:var(--safety);
+  font-weight:700; font-size:11px; letter-spacing:.06em; text-transform:uppercase; padding:8px 10px; text-decoration:none; color:var(--ink); }
+
+.leaflet-popup-content{ font-family:'IBM Plex Sans Condensed',sans-serif; font-size:13px; }
+.leaflet-popup-content b{ font-weight:700; }
+.leaflet-popup-content .mono{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--muted); }
+
+@media (prefers-reduced-motion:reduce){ *{ transition:none!important; } }
+</style>
+</head>
+<body>
+
+<!-- ===================== LOGIN ===================== -->
+<div id="login">
+  <div class="card">
+    <div class="head">Dashboard · Sign In</div>
+    <div class="body">
+      <div>
+        <div class="cap">Email</div>
+        <input id="email" type="email" inputmode="email" autocomplete="username" placeholder="you@email.com" />
+      </div>
+      <div>
+        <div class="cap">Password</div>
+        <input id="pw" type="password" autocomplete="current-password" placeholder="••••••••" />
+      </div>
+      <button id="loginBtn" type="button">Unlock</button>
+      <div class="msg" id="loginMsg"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== APP ===================== -->
+<div id="app">
+  <div class="bar">
+    <span class="t">Check-In Dashboard</span>
+    <div class="tools">
+      <button id="refresh" type="button">Refresh</button>
+      <button id="logout" type="button">Sign Out</button>
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <div class="controls">
+    <select id="driverFilter"><option value="">All drivers</option></select>
+    <select id="sortBy">
+      <option value="newest">Newest first</option>
+      <option value="oldest">Oldest first</option>
+      <option value="driver">By driver</option>
+      <option value="accuracy">Best accuracy</option>
+    </select>
+    <button class="csv" id="csvBtn" type="button">Download CSV</button>
+    <span class="count" id="count">—</span>
+  </div>
+
+  <div class="list" id="list">
+    <div class="state" id="state">Loading check-ins…</div>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
+  from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+import { getFirestore, collection, getDocs, query, orderBy }
+  from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+
+/* ============================================================
+   YOUR FIREBASE CONFIG — already filled in (check-in-4eb56).
+   Public is fine: your Firestore RULES + this login are the lock.
+   ============================================================ */
+const firebaseConfig = {
+  apiKey: "AIzaSyDzvxKptm26YrTLGnLBQVWA3bsxW_BdUqo",
+  authDomain: "check-in-4eb56.firebaseapp.com",
+  projectId: "check-in-4eb56",
+  storageBucket: "check-in-4eb56.firebasestorage.app",
+  messagingSenderId: "234001919198",
+  appId: "1:234001919198:web:bb960c425745a6e2ac264f",
+};
+const COLLECTION = "checkins";
+
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getFirestore(app);
+const $ = id => document.getElementById(id);
+
+let rows = [];          // all check-ins, as {name, lat, lng, accuracyM, when(Date|null)}
+let map = null, markers = null;
+
+
+/* ============================================================
+   AUTH — the gate. onAuthStateChanged fires on load and on every
+   sign-in/out, so it's the single source of truth for "show app".
+   ============================================================ */
+onAuthStateChanged(auth, user => {
+  if (user){
+    $("login").style.display = "none";
+    $("app").style.display = "flex";
+    initMap();
+    loadData();
+  } else {
+    $("app").style.display = "none";
+    $("login").style.display = "flex";
+  }
+});
+
+$("loginBtn").addEventListener("click", doLogin);
+$("pw").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+
+async function doLogin(){
+  const email = $("email").value.trim();
+  const pw = $("pw").value;
+  const btn = $("loginBtn");
+  $("loginMsg").textContent = "";
+  if (!email || !pw){ $("loginMsg").textContent = "Enter your email and password."; return; }
+
+  btn.disabled = true; btn.textContent = "Checking…";
+  try {
+    await signInWithEmailAndPassword(auth, email, pw);
+    // onAuthStateChanged takes over from here.
+  } catch (err) {
+    // Friendly messages for the common cases.
+    const m = {
+      "auth/invalid-credential": "Wrong email or password.",
+      "auth/invalid-email": "That email doesn't look right.",
+      "auth/user-not-found": "No account with that email. Create one in the Firebase console.",
+      "auth/wrong-password": "Wrong password.",
+      "auth/too-many-requests": "Too many tries. Wait a minute and retry.",
+      "auth/unauthorized-domain": "This site isn't in Firebase's Authorized Domains yet. Add it in Authentication → Settings.",
+    };
+    $("loginMsg").textContent = m[err.code] || ("Sign-in failed: " + err.code);
+  } finally {
+    btn.disabled = false; btn.textContent = "Unlock";
+  }
+}
+
+$("logout").addEventListener("click", () => signOut(auth));
+
+
+/* ============================================================
+   MAP — Leaflet + free OpenStreetMap tiles. circleMarkers avoid
+   the missing-pin-image problem entirely.
+   ============================================================ */
+function initMap(){
+  if (map) return;                        // build once
+  // Start over Western Washington (Seattle–Tacoma–Olympia). Once real
+  // check-ins load, fitBounds() below re-frames to wherever the pins are,
+  // so this only matters on the very first, empty load.
+  map = L.map("map").setView([47.25, -122.45], 9);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "© OpenStreetMap",
+  }).addTo(map);
+  markers = L.layerGroup().addTo(map);
+}
+
+function drawMarkers(list){
+  markers.clearLayers();
+  const pts = [];
+  list.forEach(r => {
+    if (typeof r.lat !== "number" || typeof r.lng !== "number") return;
+    const color = accColor(r.accuracyM);
+    const m = L.circleMarker([r.lat, r.lng], {
+      radius: 8, color: "#14161A", weight: 2, fillColor: color, fillOpacity: 0.9,
+    }).bindPopup(
+      `<b>${escapeHtml(r.name)}</b><br>${fmtWhen(r.when)}<br>` +
+      `<span class="mono">±${r.accuracyM ?? "?"} m · ${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}</span>`
+    );
+    m._row = r;
+    markers.addLayer(m);
+    pts.push([r.lat, r.lng]);
+  });
+  if (pts.length){
+    map.fitBounds(pts, { padding: [30, 30], maxZoom: 15 });
+  }
+}
+
+// Pan to a specific check-in and open its popup (called from a list tap).
+function focusOn(r){
+  if (typeof r.lat !== "number") return;
+  map.setView([r.lat, r.lng], 15);
+  markers.eachLayer(m => { if (m._row === r) m.openPopup(); });
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+
+/* ============================================================
+   DATA — read the collection, newest first.
+   ============================================================ */
+async function loadData(){
+  setState("Loading check-ins…");
+  try {
+    const snap = await getDocs(query(collection(db, COLLECTION), orderBy("serverTime", "desc")));
+    rows = snap.docs.map(d => {
+      const x = d.data();
+      // serverTime is a Firestore Timestamp; may be null for a split second
+      // right after a write. Fall back to the device time if so.
+      const when = x.serverTime?.toDate ? x.serverTime.toDate()
+                 : (x.deviceTime ? new Date(x.deviceTime) : null);
+      return {
+        name: x.name || "(no name)",
+        lat: typeof x.lat === "number" ? x.lat : null,
+        lng: typeof x.lng === "number" ? x.lng : null,
+        accuracyM: x.accuracyM ?? null,
+        when,
+      };
+    });
+    buildDriverFilter();
+    render();
+  } catch (err) {
+    // The usual culprit: rules still block reads. Tell them exactly that.
+    if (err.code === "permission-denied"){
+      setState("Can't read data — your Firestore rules still block reads. Publish the updated rule (allow read if signed in).");
+    } else {
+      setState("Couldn't load data: " + (err.code || err.message));
+    }
+    console.error(err);
+  }
+}
+
+$("refresh").addEventListener("click", loadData);
+$("driverFilter").addEventListener("change", render);
+$("sortBy").addEventListener("change", render);
+
+
+/* ============================================================
+   RENDER — filter + sort + paint list + markers.
+   ============================================================ */
+function render(){
+  const driver = $("driverFilter").value;
+  const sort = $("sortBy").value;
+
+  let view = rows.filter(r => !driver || r.name === driver);
+
+  view.sort((a, b) => {
+    if (sort === "oldest") return (a.when?.getTime() || 0) - (b.when?.getTime() || 0);
+    if (sort === "driver") return a.name.localeCompare(b.name) || (b.when?.getTime() || 0) - (a.when?.getTime() || 0);
+    if (sort === "accuracy") return (a.accuracyM ?? 1e9) - (b.accuracyM ?? 1e9);
+    return (b.when?.getTime() || 0) - (a.when?.getTime() || 0);   // newest
+  });
+
+  $("count").textContent = view.length + (view.length === 1 ? " check-in" : " check-ins");
+  drawMarkers(view);
+
+  const list = $("list");
+  if (!rows.length){ setState("No check-ins yet. Once a driver taps Send, rows appear here."); return; }
+  if (!view.length){ setState("No check-ins for that driver."); return; }
+
+  list.innerHTML = "";
+  view.forEach(r => {
+    const el = document.createElement("div");
+    el.className = "row";
+    const hasLoc = typeof r.lat === "number";
+    const maps = hasLoc ? `https://www.google.com/maps?q=${r.lat},${r.lng}` : "#";
+    el.innerHTML = `
+      <div class="name">${escapeHtml(r.name)}</div>
+      <div class="when">${fmtWhen(r.when)}</div>
+      <a class="go" href="${maps}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Maps ↗</a>
+      <div class="acc"><span class="dot ${accClass(r.accuracyM)}"></span>±${r.accuracyM ?? "?"} m</div>
+      <div class="coords">${hasLoc ? r.lat.toFixed(6) + ", " + r.lng.toFixed(6) : "no location"}</div>
+    `;
+    el.addEventListener("click", () => focusOn(r));
+    list.appendChild(el);
+  });
+}
+
+function buildDriverFilter(){
+  const names = [...new Set(rows.map(r => r.name))].sort();
+  const sel = $("driverFilter");
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All drivers</option>' +
+    names.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+  sel.value = cur;   // keep selection across refreshes
+}
+
+
+/* ============================================================
+   CSV — build from the currently filtered/sorted view.
+   ============================================================ */
+$("csvBtn").addEventListener("click", () => {
+  const driver = $("driverFilter").value;
+  const view = rows.filter(r => !driver || r.name === driver);
+  if (!view.length){ return; }
+
+  const header = ["name", "datetime", "accuracy_m", "lat", "lng"];
+  const lines = [header.join(",")];
+  view.forEach(r => {
+    lines.push([
+      csv(r.name),
+      csv(r.when ? r.when.toISOString() : ""),
+      r.accuracyM ?? "",
+      r.lat ?? "",
+      r.lng ?? "",
+    ].join(","));
+  });
+
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 10);
+  a.href = url; a.download = `checkins_${stamp}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+});
+
+
+/* ============================================================
+   HELPERS
+   ============================================================ */
+function accClass(m){ if (m == null) return "bad"; if (m <= 30) return "good"; if (m <= 100) return "mid"; return "bad"; }
+function accColor(m){ if (m == null) return "#C0132A"; if (m <= 30) return "#0A6E3B"; if (m <= 100) return "#B45309"; return "#C0132A"; }
+
+function fmtWhen(d){
+  if (!d) return "—";
+  return d.toLocaleString([], { weekday:"short", hour:"2-digit", minute:"2-digit", month:"short", day:"numeric" });
+}
+function setState(msg){ $("list").innerHTML = `<div class="state">${escapeHtml(msg)}</div>`; }
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
+function csv(s){ const t = String(s); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; }
+</script>
+</body>
+</html>
