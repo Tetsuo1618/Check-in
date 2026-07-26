@@ -1,7 +1,3 @@
-# Check-in
-Qr app for my drivers
-dashboard -
-tetsuo1618.github.io/Check-in/dashboard.html
+# Practice Learning  Check-in app
 
-check in - 
-tetsuo1618.github.io/Check-in
+
