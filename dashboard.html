@@ -60,6 +60,18 @@ body{ font-family:'IBM Plex Sans Condensed','Roboto Condensed',system-ui,sans-se
 .controls .csv{ border:2px solid var(--ink); background:var(--pass); color:#fff; font-weight:700;
   letter-spacing:.06em; text-transform:uppercase; font-size:12px; padding:7px 12px; cursor:pointer; }
 
+/* team color-key chips (also the filter + live counts) */
+.chips{ display:flex; gap:6px; flex-wrap:wrap; padding:calc(var(--step)*3) calc(var(--step)*4);
+  background:var(--label); border-bottom:1px solid var(--rule); }
+.chip{ display:inline-flex; align-items:center; gap:6px; border:2px solid var(--rule);
+  background:var(--label); padding:5px 9px; cursor:pointer;
+  font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:12px; color:var(--ink); }
+.chip .sw{ width:12px; height:12px; border:1px solid var(--ink); flex:0 0 12px; }
+.chip .ct{ color:var(--muted); font-weight:400; }
+.chip.on{ border-color:var(--ink); background:var(--field); }
+.chip.zero{ opacity:.4; }            /* a team with no check-ins yet = easy to spot */
+.chip.all .sw{ background:var(--ink); }
+
 .list{ flex:1; background:var(--label); }
 .state{ padding:calc(var(--step)*8) calc(var(--step)*4); text-align:center; color:var(--muted); font-size:14px; }
 
@@ -115,8 +127,10 @@ body{ font-family:'IBM Plex Sans Condensed','Roboto Condensed',system-ui,sans-se
 
   <div id="map"></div>
 
+  <!-- team color-key + tap-to-filter + live counts -->
+  <div class="chips" id="teamChips"></div>
+
   <div class="controls">
-    <select id="teamFilter"><option value="">All route teams</option></select>
     <select id="sortBy">
       <option value="newest">Newest first</option>
       <option value="oldest">Oldest first</option>
@@ -160,6 +174,24 @@ const $ = id => document.getElementById(id);
 
 let rows = [];          // all check-ins, as {name, lat, lng, accuracyM, when(Date|null)}
 let map = null, markers = null;
+let activeTeam = "";     // "" = show all teams; set by tapping a chip
+
+// Fixed color per route team. Deliberately NOT green/amber/red — those mean
+// ACCURACY in the list dots, and one color can't mean two things. Unknown
+// teams fall back to grey.
+const KNOWN_TEAMS = ["RT11", "RT12", "RT13", "RT27", "RT30"];
+const TEAM_COLORS = {
+  RT11: "#1E6FD9", RT12: "#8A3FFC", RT13: "#0FB5AE", RT27: "#E8710A", RT30: "#C0398F",
+};
+function teamColor(t){ return TEAM_COLORS[t] || "#616872"; }
+
+// Mirror of the driver-page rule: "12"/"rt12"/"RT 12" -> "RT12". Applied on
+// read so old bare-number check-ins and new clean ones land as one team.
+function normalizeTeam(raw){
+  const up = String(raw).trim().toUpperCase();
+  const digits = up.replace(/\D/g, "");
+  return digits ? "RT" + digits : up;
+}
 
 
 /* ============================================================
@@ -233,7 +265,8 @@ function drawMarkers(list){
   const pts = [];
   list.forEach(r => {
     if (typeof r.lat !== "number" || typeof r.lng !== "number") return;
-    const color = accColor(r.accuracyM);
+    // Pin color = TEAM (accuracy still shown in the list dot + popup).
+    const color = teamColor(r.routeTeam);
     const m = L.circleMarker([r.lat, r.lng], {
       radius: 8, color: "#14161A", weight: 2, fillColor: color, fillOpacity: 0.9,
     }).bindPopup(
@@ -272,15 +305,16 @@ async function loadData(){
       const when = x.serverTime?.toDate ? x.serverTime.toDate()
                  : (x.deviceTime ? new Date(x.deviceTime) : null);
       return {
-        // fall back to the old `name` field so early test rows still display
-        routeTeam: x.routeTeam || x.name || "(unknown)",
+        // Normalize on read so a bare "12" is treated as "RT12" — this fixes
+      // check-ins that came in before the driver-page fix, at the viewing layer.
+      routeTeam: normalizeTeam(x.routeTeam || x.name || "(unknown)"),
         lat: typeof x.lat === "number" ? x.lat : null,
         lng: typeof x.lng === "number" ? x.lng : null,
         accuracyM: x.accuracyM ?? null,
         when,
       };
     });
-    buildTeamFilter();
+    buildChips();
     render();
   } catch (err) {
     // The usual culprit: rules still block reads. Tell them exactly that.
@@ -294,7 +328,6 @@ async function loadData(){
 }
 
 $("refresh").addEventListener("click", loadData);
-$("teamFilter").addEventListener("change", render);
 $("sortBy").addEventListener("change", render);
 
 
@@ -302,8 +335,9 @@ $("sortBy").addEventListener("change", render);
    RENDER — filter + sort + paint list + markers.
    ============================================================ */
 function render(){
-  const team = $("teamFilter").value;
+  const team = activeTeam;
   const sort = $("sortBy").value;
+  markActiveChip();
 
   let view = rows.filter(r => !team || r.routeTeam === team);
 
@@ -325,6 +359,7 @@ function render(){
   view.forEach(r => {
     const el = document.createElement("div");
     el.className = "row";
+    el.style.borderLeft = "6px solid " + teamColor(r.routeTeam);
     const hasLoc = typeof r.lat === "number";
     const maps = hasLoc ? `https://www.google.com/maps?q=${r.lat},${r.lng}` : "#";
     el.innerHTML = `
@@ -339,13 +374,43 @@ function render(){
   });
 }
 
-function buildTeamFilter(){
-  const teams = [...new Set(rows.map(r => r.routeTeam))].sort();
-  const sel = $("teamFilter");
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">All route teams</option>' +
-    teams.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("");
-  sel.value = cur;   // keep selection across refreshes
+// Build the color-key chips: "ALL" + every known team (always shown, so a
+// team with zero check-ins is visibly missing) + any unexpected team in data.
+function buildChips(){
+  const wrap = $("teamChips");
+  wrap.innerHTML = "";
+
+  const counts = {};
+  rows.forEach(r => { counts[r.routeTeam] = (counts[r.routeTeam] || 0) + 1; });
+
+  wrap.appendChild(makeChip("", "ALL", rows.length, null));
+  KNOWN_TEAMS.forEach(t => wrap.appendChild(makeChip(t, t, counts[t] || 0, teamColor(t))));
+  Object.keys(counts).filter(t => !KNOWN_TEAMS.includes(t)).sort()
+    .forEach(t => wrap.appendChild(makeChip(t, t, counts[t], teamColor(t))));
+
+  markActiveChip();
+}
+
+function makeChip(team, label, count, color){
+  const c = document.createElement("button");
+  c.type = "button";
+  c.className = "chip" + (team === "" ? " all" : "") + (team && count === 0 ? " zero" : "");
+  c.dataset.team = team;
+  c.innerHTML =
+    (team === "" ? `<span class="sw"></span>` : `<span class="sw" style="background:${color}"></span>`) +
+    `<span>${escapeHtml(label)}</span><span class="ct">${count}</span>`;
+  c.addEventListener("click", () => {
+    // tapping the already-active team (or ALL) returns to all teams
+    activeTeam = (activeTeam === team) ? "" : team;
+    render();
+  });
+  return c;
+}
+
+function markActiveChip(){
+  $("teamChips").querySelectorAll(".chip").forEach(c => {
+    c.classList.toggle("on", c.dataset.team === activeTeam);
+  });
 }
 
 
@@ -353,7 +418,7 @@ function buildTeamFilter(){
    CSV — build from the currently filtered/sorted view.
    ============================================================ */
 $("csvBtn").addEventListener("click", () => {
-  const team = $("teamFilter").value;
+  const team = activeTeam;
   const view = rows.filter(r => !team || r.routeTeam === team);
   if (!view.length){ return; }
 

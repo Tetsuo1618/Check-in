@@ -148,11 +148,18 @@ try {
    THE ONE ACTION
    ============================================================ */
 sendBtn.addEventListener("click", async () => {
-  // .toUpperCase() keeps the data clean: rt27, Rt27 and RT27 would otherwise
-  // appear as three separate teams in the dashboard filter.
-  const rt = rtEl.value.trim().toUpperCase();
+  // Normalize the route team so typos can't split the data.
+  //   "12", "rt12", "RT 12", "Rt-12"  ->  "RT12"
+  // We pull out the digits and always prefix "RT". If they somehow typed
+  // no digits at all, we keep whatever they entered (uppercased) so it isn't lost.
+  let rt = rtEl.value.trim().toUpperCase();
+  const digits = rt.replace(/\D/g, "");        // keep only 0-9
+  if (digits) rt = "RT" + digits;              // rebuild in the canonical form
   if (!rt){ setStatus("err", "TEAM", "Enter your route team first."); rtEl.focus(); return; }
   if (!db){ setStatus("err", "SETUP", "Firebase isn't ready."); return; }
+
+  // Show the driver the cleaned value so they see what actually gets sent.
+  rtEl.value = rt;
 
   // Remember it for next time on this phone.
   try { localStorage.setItem("checkin_rt", rt); } catch (_) {}
