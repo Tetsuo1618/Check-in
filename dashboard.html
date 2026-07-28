@@ -60,6 +60,20 @@ body{ font-family:'IBM Plex Sans Condensed','Roboto Condensed',system-ui,sans-se
 .controls .csv{ border:2px solid var(--ink); background:var(--pass); color:#fff; font-weight:700;
   letter-spacing:.06em; text-transform:uppercase; font-size:12px; padding:7px 12px; cursor:pointer; }
 
+/* date scope bar */
+.datebar{ display:flex; gap:6px; align-items:center; flex-wrap:wrap;
+  padding:calc(var(--step)*3) calc(var(--step)*4); background:var(--label);
+  border-bottom:1px solid var(--rule); }
+.datebar input[type=date]{ font-family:'IBM Plex Mono',monospace; font-size:13px;
+  border:2px solid var(--ink); background:var(--label); color:var(--ink); padding:6px 8px; }
+.datebar button{ font-family:'IBM Plex Sans Condensed',sans-serif; font-weight:700;
+  font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+  border:2px solid var(--ink); background:var(--label); color:var(--ink);
+  padding:7px 10px; cursor:pointer; }
+.datebar button.on{ background:var(--safety); }
+.datebar .scope{ margin-left:auto; font-family:'IBM Plex Mono',monospace;
+  font-size:12px; color:var(--muted); }
+
 /* team color-key chips (also the filter + live counts) */
 .chips{ display:flex; gap:6px; flex-wrap:wrap; padding:calc(var(--step)*3) calc(var(--step)*4);
   background:var(--label); border-bottom:1px solid var(--rule); }
@@ -127,6 +141,14 @@ body{ font-family:'IBM Plex Sans Condensed','Roboto Condensed',system-ui,sans-se
 
   <div id="map"></div>
 
+  <!-- date scope: pick a day, or All. Filters map + list + chips + CSV. -->
+  <div class="datebar">
+    <input type="date" id="datePick" />
+    <button id="todayBtn" type="button">Today</button>
+    <button id="allBtn" type="button">All dates</button>
+    <span class="scope" id="scope">—</span>
+  </div>
+
   <!-- team color-key + tap-to-filter + live counts -->
   <div class="chips" id="teamChips"></div>
 
@@ -175,6 +197,23 @@ const $ = id => document.getElementById(id);
 let rows = [];          // all check-ins, as {name, lat, lng, accuracyM, when(Date|null)}
 let map = null, markers = null;
 let activeTeam = "";     // "" = show all teams; set by tapping a chip
+let activeDate = "";     // "" = ALL dates; otherwise "YYYY-MM-DD" (local)
+
+// Local calendar-day key. Uses the phone's timezone, NOT UTC, so "today"
+// means today where you are — not a day that flips at 5pm.
+function dateKey(d){
+  if (!d) return "";
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,"0"), day = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+function todayKey(){ return dateKey(new Date()); }
+
+// Pretty label for the scope readout, e.g. "Mon, Jul 28".
+function prettyDate(key){
+  if (!key) return "All dates";
+  const [y,m,d] = key.split("-").map(Number);
+  return new Date(y, m-1, d).toLocaleDateString([], { weekday:"short", month:"short", day:"numeric" });
+}
 
 // Fixed color per route team. Deliberately NOT green/amber/red — those mean
 // ACCURACY in the list dots, and one color can't mean two things. Unknown
@@ -202,6 +241,7 @@ onAuthStateChanged(auth, user => {
   if (user){
     $("login").style.display = "none";
     $("app").style.display = "flex";
+    activeDate = todayKey();      // open on TODAY; tap "All dates" for full history
     initMap();
     loadData();
   } else {
@@ -314,8 +354,7 @@ async function loadData(){
         when,
       };
     });
-    buildChips();
-    render();
+    render();   // render() builds the chips from the date-filtered set
   } catch (err) {
     // The usual culprit: rules still block reads. Tell them exactly that.
     if (err.code === "permission-denied"){
@@ -330,6 +369,19 @@ async function loadData(){
 $("refresh").addEventListener("click", loadData);
 $("sortBy").addEventListener("change", render);
 
+/* ---- date scope controls ---- */
+$("datePick").addEventListener("change", () => { activeDate = $("datePick").value || ""; render(); });
+$("todayBtn").addEventListener("click", () => { activeDate = todayKey(); render(); });
+$("allBtn").addEventListener("click",   () => { activeDate = "";        render(); });
+
+// Keep the date box, the two buttons, and the scope label agreeing with state.
+function syncDateUI(){
+  $("datePick").value = activeDate;                    // empty box when showing All
+  $("todayBtn").classList.toggle("on", activeDate === todayKey());
+  $("allBtn").classList.toggle("on", activeDate === "");
+  $("scope").textContent = prettyDate(activeDate);
+}
+
 
 /* ============================================================
    RENDER — filter + sort + paint list + markers.
@@ -337,9 +389,15 @@ $("sortBy").addEventListener("change", render);
 function render(){
   const team = activeTeam;
   const sort = $("sortBy").value;
-  markActiveChip();
 
-  let view = rows.filter(r => !team || r.routeTeam === team);
+  // 1) narrow to the selected day (or all days), 2) then to the selected team.
+  // Chip counts are built from the DATE-filtered set, so a chip shows how many
+  // check-ins that team has on the day you're looking at.
+  const dateFiltered = rows.filter(r => !activeDate || dateKey(r.when) === activeDate);
+  buildChips(dateFiltered);
+  syncDateUI();
+
+  let view = dateFiltered.filter(r => !team || r.routeTeam === team);
 
   view.sort((a, b) => {
     if (sort === "oldest") return (a.when?.getTime() || 0) - (b.when?.getTime() || 0);
@@ -353,7 +411,12 @@ function render(){
 
   const list = $("list");
   if (!rows.length){ setState("No check-ins yet. Once a route team taps Send, rows appear here."); return; }
-  if (!view.length){ setState("No check-ins for that route team."); return; }
+  if (!view.length){
+    setState(activeDate
+      ? `No check-ins on ${prettyDate(activeDate)}${activeTeam ? " for " + activeTeam : ""}.`
+      : "No check-ins for that route team.");
+    return;
+  }
 
   list.innerHTML = "";
   view.forEach(r => {
@@ -376,14 +439,14 @@ function render(){
 
 // Build the color-key chips: "ALL" + every known team (always shown, so a
 // team with zero check-ins is visibly missing) + any unexpected team in data.
-function buildChips(){
+function buildChips(scopeRows){
   const wrap = $("teamChips");
   wrap.innerHTML = "";
 
   const counts = {};
-  rows.forEach(r => { counts[r.routeTeam] = (counts[r.routeTeam] || 0) + 1; });
+  scopeRows.forEach(r => { counts[r.routeTeam] = (counts[r.routeTeam] || 0) + 1; });
 
-  wrap.appendChild(makeChip("", "ALL", rows.length, null));
+  wrap.appendChild(makeChip("", "ALL", scopeRows.length, null));
   KNOWN_TEAMS.forEach(t => wrap.appendChild(makeChip(t, t, counts[t] || 0, teamColor(t))));
   Object.keys(counts).filter(t => !KNOWN_TEAMS.includes(t)).sort()
     .forEach(t => wrap.appendChild(makeChip(t, t, counts[t], teamColor(t))));
@@ -418,27 +481,87 @@ function markActiveChip(){
    CSV — build from the currently filtered/sorted view.
    ============================================================ */
 $("csvBtn").addEventListener("click", () => {
-  const team = activeTeam;
-  const view = rows.filter(r => !team || r.routeTeam === team);
-  if (!view.length){ return; }
+  // Same scope you're looking at: selected date + selected team.
+  const scoped = rows.filter(r =>
+    (!activeDate || dateKey(r.when) === activeDate) &&
+    (!activeTeam || r.routeTeam === activeTeam)
+  );
+  if (!scoped.length) return;
 
-  const header = ["route_team", "datetime", "accuracy_m", "lat", "lng"];
+  // Group by team, then order each team's stops OLDEST -> NEWEST. Gaps and
+  // distances only make sense forward in time, within one team's own route.
+  const byTeam = {};
+  scoped.forEach(r => { (byTeam[r.routeTeam] = byTeam[r.routeTeam] || []).push(r); });
+  Object.values(byTeam).forEach(list =>
+    list.sort((a, b) => (a.when?.getTime() || 0) - (b.when?.getTime() || 0))
+  );
+
+  const header = [
+    "route_team", "date", "time", "stop_no",
+    "gap_min", "distance_mi_straight_line", "cumulative_mi",
+    "accuracy_m", "lat", "lng", "note",
+  ];
   const lines = [header.join(",")];
-  view.forEach(r => {
-    lines.push([
-      csv(r.routeTeam),
-      csv(r.when ? r.when.toISOString() : ""),
-      r.accuracyM ?? "",
-      r.lat ?? "",
-      r.lng ?? "",
+  const summary = [];
+
+  Object.keys(byTeam).sort().forEach(team => {
+    const list = byTeam[team];
+    let prev = null, cumMi = 0, totalMin = 0;
+
+    list.forEach((r, i) => {
+      let gapMin = "", distMi = "", note = "";
+
+      if (prev) {
+        // minutes between this scan and that team's previous scan
+        if (prev.when && r.when) {
+          const mins = (r.when - prev.when) / 60000;
+          gapMin = mins.toFixed(1);
+          totalMin += mins;
+        }
+        // straight-line miles between the two GPS points
+        if (typeof prev.lat === "number" && typeof r.lat === "number") {
+          const mi = haversineMi(prev.lat, prev.lng, r.lat, r.lng);
+          distMi = mi.toFixed(2);
+          cumMi += mi;
+        }
+        // flag an overnight jump so a new workday isn't read as one long run
+        if (prev.when && r.when && dateKey(prev.when) !== dateKey(r.when)) note = "new day";
+      } else {
+        note = "route start";
+      }
+
+      lines.push([
+        csv(team),
+        csv(r.when ? dateKey(r.when) : ""),
+        csv(r.when ? r.when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""),
+        i + 1,
+        gapMin,
+        distMi,
+        cumMi ? cumMi.toFixed(2) : "",
+        r.accuracyM ?? "",
+        r.lat ?? "",
+        r.lng ?? "",
+        csv(note),
+      ].join(","));
+    });
+
+    summary.push([
+      csv(team), list.length, cumMi.toFixed(2),
+      totalMin.toFixed(0), (totalMin / 60).toFixed(2),
     ].join(","));
   });
+
+  // Blank line, then a totals block. Keeps the main table clean for sorting.
+  lines.push("");
+  lines.push("SUMMARY (straight-line distance; not road miles)");
+  lines.push(["route_team", "stops", "total_mi", "total_min", "total_hours"].join(","));
+  summary.forEach(l => lines.push(l));
 
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  const stamp = new Date().toISOString().slice(0, 10);
-  a.href = url; a.download = `checkins_${stamp}.csv`;
+  const scope = (activeDate || "all-dates") + (activeTeam ? "_" + activeTeam : "");
+  a.href = url; a.download = `checkins_${scope}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 });
@@ -447,6 +570,18 @@ $("csvBtn").addEventListener("click", () => {
 /* ============================================================
    HELPERS
    ============================================================ */
+// Great-circle distance in MILES. Straight-line ("as the crow flies") — it is
+// NOT driving distance, which would need a paid routing service. Consistent
+// across every row, so it is honest for comparing stops and teams.
+function haversineMi(lat1, lng1, lat2, lng2){
+  const R = 3958.7613;                       // Earth radius in miles
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
 function accClass(m){ if (m == null) return "bad"; if (m <= 30) return "good"; if (m <= 100) return "mid"; return "bad"; }
 function accColor(m){ if (m == null) return "#C0132A"; if (m <= 30) return "#0A6E3B"; if (m <= 100) return "#B45309"; return "#C0132A"; }
 
