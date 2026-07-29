@@ -145,9 +145,36 @@ try {
 
 
 /* ============================================================
+   COOLDOWN — one check-in per minute, per phone.
+   Stops accidental double/triple taps from filling the log with
+   duplicate stops at the same timestamp.
+   ============================================================ */
+const COOLDOWN_MS = 60 * 1000;
+
+// How many milliseconds are left on the cooldown? 0 = free to send.
+function cooldownLeft(){
+  try {
+    const last = Number(localStorage.getItem("checkin_last") || 0);
+    if (!last) return 0;
+    const left = COOLDOWN_MS - (Date.now() - last);
+    // A negative or absurd value (phone clock changed) means: allow it.
+    return left > 0 && left <= COOLDOWN_MS ? left : 0;
+  } catch (_) { return 0; }
+}
+
+
+/* ============================================================
    THE ONE ACTION
    ============================================================ */
 sendBtn.addEventListener("click", async () => {
+  // Block a repeat tap inside the cooldown window, and say how long is left.
+  const left = cooldownLeft();
+  if (left > 0){
+    const secs = Math.ceil(left / 1000);
+    setStatus("err", "WAIT", `Already sent. Try again in ${secs} second${secs === 1 ? "" : "s"}.`);
+    return;
+  }
+
   // Normalize the route team so typos can't split the data.
   //   "12", "rt12", "RT 12", "Rt-12"  ->  "RT12"
   // We pull out the digits and always prefix "RT". If they somehow typed
@@ -210,6 +237,10 @@ sendBtn.addEventListener("click", async () => {
     const acc = Math.round(fix.coords.accuracy);
     const when = new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
     setStatus("ok", "SENT \u2713", `Location sent at ${when} · accuracy ${acc} m.`);
+
+    // Start the 1-minute cooldown only AFTER a confirmed send, so a failed
+    // attempt never locks the driver out of retrying immediately.
+    try { localStorage.setItem("checkin_last", String(Date.now())); } catch (_) {}
   } catch (err) {
     const msg = (err && err.code === "timeout")
       ? "Weak signal — couldn't confirm. Move into better signal and tap again."

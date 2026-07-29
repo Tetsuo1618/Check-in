@@ -537,12 +537,14 @@ $("csvBtn").addEventListener("click", () => {
         i + 1,
         gapMin,
         distMi,
-        cumMi ? cumMi.toFixed(2) : "",
+        i === 0 ? "" : cumMi.toFixed(2),   // blank only on a route's first stop
         r.accuracyM ?? "",
         r.lat ?? "",
         r.lng ?? "",
         csv(note),
       ].join(","));
+
+      prev = r;   // <-- carry this stop forward as the reference for the next one
     });
 
     summary.push([
